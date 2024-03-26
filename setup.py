@@ -12,7 +12,6 @@ setup(
     packages=find_packages(),
     install_requires=[
         'numpy',
-        'git+https://github.com/petered/artemis.git@develop#egg=artemis-ml',
         'tinydb',
     ],
     classifiers=[
