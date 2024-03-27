@@ -1,8 +1,9 @@
 import re
 from datetime import datetime
-from typing import Sequence
+from typing import Sequence, Optional, Tuple
 import pysrt
 
+from artemis.general.utils_for_testing import hold_tempfile
 from artemis.image_processing.video_frame import FrameGeoData
 from image_annotation.kml_files import write_kml_file
 
@@ -47,6 +48,23 @@ def read_dji_srt_file(srt_path: str) -> Sequence[FrameGeoData]:
             ))
     return items
 
+
+def cut_srt_file(srt_path: str, new_srt_path: str, time_interval: Tuple[Optional[float], Optional[float]]):
+    # subs = pysrt.open(srt_path)
+    # items = []
+    # with hold_tempfile(ext='.srt') as temp_srt_path:
+    #     for i, item in enumerate(subs):
+    #         new_format_match = re.search(r"GPS \(([-\w\.]+), ([-\w\.]+), ([-\w\.]+)\)", item.text_without_tags.strip('\n'))
+    #         if new_format_match:
+    #             epoch_time_s = item.start.ordinal/1000
+    #             if time_interval[0] is not None and epoch_time_s < time_interval[0]:
+    #                 continue
+    #             if time_interval[1] is not None and epoch_time_s > time_interval[1]:
+    #                 break
+    #             items.append(item)
+
+    # Now save the existing items
+    pysrt.open(srt_path).slice(starts_after={'seconds': time_interval[0]}, ends_after={'seconds': time_interval[1]}).save(new_srt_path)
 
 def srt_to_kml(srt_path: str, kml_path: str, kml_object_name: str):
     frame_data = read_dji_srt_file(srt_path)
