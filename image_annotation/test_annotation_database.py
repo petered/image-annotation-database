@@ -140,6 +140,21 @@ def test_serialization():
         print("Success")
 
 
+def test_write_annotation_to_directory_with_nonlatin():
+
+    with hold_tempdir() as tempdir:
+        subdir = os.path.join(tempdir, '中文')
+        db = AnnotationDatabaseAccessor(subdir, source_data_base_path=None)
+        fsii = load_test_fsi_image_from_image_file()
+        assert db.load_annotated_image(fsii.frame_source_info.get_source_identifier()) is None
+        db.save_annotated_image(frame_source_info=fsii.frame_source_info, image=fsii.image, save_image=True, save_thumbnails=True)
+        assert os.path.exists(subdir)
+        fsii_reloaded = db.load_annotated_image(fsii.frame_source_info.get_source_identifier())
+        assert fsii_reloaded is not None
+        assert np.array_equal(fsii.image, fsii_reloaded.image)
+
+
 if __name__ == '__main__':
-    test_annotation_db_access()
-    test_serialization()
+    # test_annotation_db_access()
+    # test_serialization()
+    test_write_annotation_to_directory_with_nonlatin()
