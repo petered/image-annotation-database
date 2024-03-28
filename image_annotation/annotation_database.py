@@ -249,12 +249,12 @@ def get_fixed_hash_from_frame_source_info(source_identifier: str) -> int:
 class AnnotationDatabaseAccessor:
     def __init__(self,
                  annotation_folder_path: str,
-                 source_data_base_path: Optional[str] = None,
+                 source_data_base_path: Optional[str] = None,  # When source paths are relative, this is the base path
                  thumbnail_size: Tuple[int, int] = (128, 128),
                  query_cache_size=3,  # Cache the last 3 queries
                  ):
         os.makedirs(annotation_folder_path, exist_ok=True)
-        self.db = TinyDB(os.path.join(annotation_folder_path, 'db.json'))
+        self.db = TinyDB(os.path.join(annotation_folder_path, 'db_cache.json'))
         self._thumbnail_size = thumbnail_size
         self._source_data_base_path = source_data_base_path
         self._image_folder_path = os.path.join(annotation_folder_path, 'images')
@@ -262,7 +262,9 @@ class AnnotationDatabaseAccessor:
         os.makedirs(self._image_folder_path, exist_ok=True)
         os.makedirs(self._thumbnail_folder_path, exist_ok=True)
         self._query_cache = CacheDict(buffer_length=query_cache_size)
-        self._cache_dirty = False
+        self._cache_dirty = True
+
+
 
     def _get_image_path_from_source_identifier(self, frame_source_info: FrameSourceInfo) -> str:
         source_id_str = compute_fixed_hash(frame_source_info.get_source_identifier(), hashrep=HashRep.BASE_32)
@@ -287,56 +289,41 @@ class AnnotationDatabaseAccessor:
     def get_n_frames_in_database(self) -> int:
         return len(self.db)
 
-    def save_annotated_image(
-            self,
-            frame_source_info: FrameSourceInfo,
-            image: Optional[BGRImageArray] = None,
-            save_image: bool = True,
-            save_thumbnails: bool = True
-    ) -> None:
-
-        # First, normalize the source file path
-        # if ';' in frame_source_info.source_file:
-        #     path = [self._relativize_path(p) for p in frame_source_info.source_file.split(';')][frame_source_info.source_index]
-        #     frame_source_info = replace(frame_source_info, source_file=path, source_index=0)
-        # else:
-        #     frame_source_info = replace(frame_source_info, source_file=self._relativize_path(frame_source_info.source_file))
-
-        frame_source_info = replace(frame_source_info, source_file=self._relativize_path(frame_source_info.source_file))
-
-        key = get_fixed_hash_from_frame_source_info(frame_source_info.get_source_identifier())
-
-        # Second, delete any existing annotations
-        # self.delete_annotation_data(frame_source_info.get_source_identifier())
-
-        frame_source_info_json = DataClassWithNumpyPreSerializer.serialize(frame_source_info)
-        # self.db.insert(frame_source_info_json)
-
-        document = Document(frame_source_info_json, doc_id=key)
-
+    def _insert_filename_and_fsi_into_database(self, filename: str, frame_source_info: FrameSourceInfo) -> None:
+        database_key = get_fixed_hash_from_frame_source_info(frame_source_info.get_source_identifier())
+        full_obj = dict(filename=filename, data=DataClassWithNumpyPreSerializer.serialize(frame_source_info))
+        document = Document(full_obj, doc_id=database_key)
         self.db.upsert(document)
 
-        # Image saving logic remains the same...
-        # Save image
-        if save_image:
-            assert image is not None, 'You must provide an image if you want to save it'
-            image_path = self._get_image_path_from_source_identifier(frame_source_info)
-            os.makedirs(os.path.dirname(image_path), exist_ok=True)
-            cv2.imwrite(image_path, image)
+    def save_annotated_image(
+            self,
+            fsii: FrameSourceInfoAndImage,
+            # frame_source_info: FrameSourceInfo,
+            # image: Optional[BGRImageArray] = None,
+            # save_image: bool = True,
+            # image_filename: Optional[str] = None,  # Optionally, specify the filename to save the image as
+            # save_thumbnails: bool = True
+    ) -> str:
+        """ Save the annotated image to the database - returning the full path to the saved image """
+        image_path = fsii.save_to_image_file(self._image_folder_path)
+        filename_key = os.path.basename(image_path)
+        self._insert_filename_and_fsi_into_database(filename_key, fsii.frame_source_info)
 
-        # Save thumbnails
-        if save_thumbnails:
-            assert image is not None, 'You must provide an image if you want to save thumbnails'
-            if frame_source_info.annotations is not None:
-                for annotation in frame_source_info.annotations:
-                    thumbnail_path = self._get_thumbnail_path_from_source_identifier(frame_source_info, annotation)
-                    i, j = annotation.ijhw_box[0:2]
-                    thumbnail = BoundingBox.from_ijhw(i, j, *self._thumbnail_size).crop_image(image)
-                    os.makedirs(os.path.dirname(thumbnail_path), exist_ok=True)
-                    cv2.imwrite(thumbnail_path, thumbnail)
+        # # Save thumbnails
+        # if save_thumbnails:
+        #     assert image is not None, 'You must provide an image if you want to save thumbnails'
+        #     if frame_source_info.annotations is not None:
+        #         for annotation in frame_source_info.annotations:
+        #             thumbnail_path = self._get_thumbnail_path_from_source_identifier(frame_source_info, annotation)
+        #             i, j = annotation.ijhw_box[0:2]
+        #             thumbnail = BoundingBox.from_ijhw(i, j, *self._thumbnail_size).crop_image(image)
+        #             os.makedirs(os.path.dirname(thumbnail_path), exist_ok=True)
+        #             cv2.imwrite(thumbnail_path, thumbnail)
 
-        print(f"Saved {frame_source_info.source_file} to database along with {len(frame_source_info.annotations)} annotations, image={save_image}, thumbnails={save_thumbnails}")
+        print(f"Saved {fsii.frame_source_info.source_file} to database along with {len(fsii.frame_source_info.annotations)} annotations")
         self._clear_caches()
+
+        return image_path
 
     #
     def _clear_caches(self):
@@ -344,41 +331,81 @@ class AnnotationDatabaseAccessor:
         #     print(f"Cleared caches on object id {id(self)}")
         self._query_cache.clear()
 
-    #     self._cache_dirty = True
+    def update_cache(self, full_clean: bool = False):
+        """ Update the tinydb cache to make sure it totally matches the image folder.  This is useful if you've added or removed images outside of this accessor."""
+        if full_clean:
+            self._query_cache.clear()
+        filenames = {f for f in os.listdir(self._image_folder_path) if is_image_path(f)}
+        filenames_in_db = {doc['filename'] for doc in self.db.all()}
+        # Remove any files in the database that are not in the folder
+        self.db.remove(cond=Query().filename.one_of(filenames_in_db - filenames))
+        # Add any files in the folder that are not in the database
+        for filename in filenames - filenames_in_db:
+            full_path = os.path.join(self._image_folder_path, filename)
+            fsii = FrameSourceInfoAndImage.load_from_image_file(full_path)
+            self._insert_filename_and_fsi_into_database(filename, fsii.frame_source_info)
+        self._cache_dirty = False
 
     def lookup_frame_source_info_from_identifier(self, source_identifier: str) -> Optional[FrameSourceInfo]:
+        if self._cache_dirty:
+            self.update_cache()
         hash_code = get_fixed_hash_from_frame_source_info(source_identifier)
-        frame_source_info_json = self.db.get(doc_id=hash_code)
-        if frame_source_info_json is None:
+        full_json = self.db.get(doc_id=hash_code)
+        if full_json is None:
             return None
+        frame_source_info_json = full_json['data']
         return DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, frame_source_info_json)
 
     def load_frame_source_info_and_image(self, frame_source_info_id: str) -> Optional[FrameSourceInfoAndImage]:
-
-        key = get_fixed_hash_from_frame_source_info(frame_source_info_id)
-        frame_source_info_json = self.db.get(doc_id=key)
-        if frame_source_info_json is None:
+        if self._cache_dirty:
+            self.update_cache()
+        database_key = get_fixed_hash_from_frame_source_info(frame_source_info_id)
+        full_json = self.db.get(doc_id=database_key)
+        if full_json is None:
             return None
-        frame_source_info = DataClassWithNumpyPreSerializer \
-            .deserialize(FrameSourceInfo, frame_source_info_json)
-        image_path = self._get_image_path_from_source_identifier(frame_source_info)
-        image = cv2.imread(image_path)
-        if image is None:
-            return None
-        return FrameSourceInfoAndImage(frame_source_info=frame_source_info, image=image)
+        filename_key = full_json['filename']
+        image_path = os.path.join(self._image_folder_path, filename_key)
+        return FrameSourceInfoAndImage.load_from_image_file(image_path)
+        #
+        # key = get_fixed_hash_from_frame_source_info(frame_source_info_id)
+        # frame_source_info_json = self.db.get(doc_id=key)
+        # if frame_source_info_json is None:
+        #     return None
+        # frame_source_info = DataClassWithNumpyPreSerializer \
+        #     .deserialize(FrameSourceInfo, frame_source_info_json)
+        # image_path = self._get_image_path_from_source_identifier(frame_source_info)
+        # image = cv2.imread(image_path)
+        # if image is None:
+        #     return None
+        # return FrameSourceInfoAndImage.load_from_image_file()
 
     def load_annotated_image(self, frame_source_info_id: str) -> Optional[AnnotatedImage]:
+        """ Convenience method to load an annotated image from the database """
         frame_source_info_and_image = self.load_frame_source_info_and_image(frame_source_info_id)
         return AnnotatedImage(image=frame_source_info_and_image.image, annotations=frame_source_info_and_image.frame_source_info.annotations) \
             if frame_source_info_and_image else None
 
     def query_annotation_data(self, query: Optional[Query] = None) -> List[FrameSourceInfo]:
+        """
+        :param query: The tinydb query object, e.g. Query().data.source_file == 'some_file.jpg'.  Full structure
+            Query()
+                .data
+                    .source_file == 'some_file.jpg'
+                    .description == 'A description'
+                    .annotations
+                        .label == 'car'
+                        .description == 'A car'
+                        ... (See Annotation)
+                    ... (See FrameSourceInfo)
+                .filename == 'some_file.ann.jpg'
+        :return: A list of FrameSourceInfo objects that match the query
+        """
         if query is None:
-            frame_source_info_json = self.db.all()
-            return [DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, doc) for doc in frame_source_info_json]
+            full_info = self.db.all()
+            return [DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, doc['data']) for doc in full_info]
         else:
-            frame_source_info_json = self.db.search(query)
-            return [DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, doc) for doc in frame_source_info_json]
+            full_info = self.db.search(query)
+            return [DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, doc['data']) for doc in full_info]
 
     def query_text_in_any_field(self, text: str) -> List[FrameSourceInfo]:
         query = Query()
@@ -388,11 +415,11 @@ class AnnotationDatabaseAccessor:
         else:
             # TODO: Enable searching by id-prefixes
             return self.query_annotation_data(
-                query.record_query.nickname.search(text) |
-                query.source_file.search(text) |
-                query.annotations.any(query.label.search(text)) |
-                query.annotations.any(query.description.search(text)) |
-                query.annotations.any(query.tags.any(text))
+                query.data.record_query.nickname.search(text) |
+                query.data.source_file.search(text) |
+                query.data.annotations.any(query.label.search(text)) |
+                query.data.annotations.any(query.description.search(text)) |
+                query.data.annotations.any(query.tags.any(text))
             )
 
     def query_annotation_data_from_path_and_source_index(self, path: str, source_index: int) -> Optional[FrameSourceInfo]:
@@ -413,9 +440,9 @@ class AnnotationDatabaseAccessor:
             return self._query_cache[path]
 
         # self.db.clear_cache()
-        paths = [self._relativize_path(p) for p in path.split(';')]
-        shortlist_json = self.db.search(Query().source_file.one_of(paths))
-        shortlist: Sequence[FrameSourceInfo] = [DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, doc) for doc in shortlist_json]
+        paths = path.split(';')
+        shortlist_json = self.db.search(Query().data.source_file.one_of(paths))
+        shortlist: Sequence[FrameSourceInfo] = [DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, doc['data']) for doc in shortlist_json]
         if len(paths) == 1:
             result = shortlist
         else:
@@ -431,28 +458,31 @@ class AnnotationDatabaseAccessor:
         # query = self._source_identifier_to_query(source_identifier) if isinstance(source_identifier, str) else source_identifier
         # self.db.remove(query)
         hash_code = get_fixed_hash_from_frame_source_info(source_identifier)
-        json_obj = self.db.get(doc_id=hash_code)
-        object = DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, json_obj)
+        full_json = self.db.get(doc_id=hash_code)
+        # object = DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, full_json['data'])
         self.db.remove(doc_ids=[hash_code])
 
         # Delete image
-        for fsi in [object]:
-            image_path = self._get_image_path_from_source_identifier(fsi)
-            try:
-                os.remove(image_path)
-            except FileNotFoundError:
-                pass
+        annotation_path = os.path.join(self._image_folder_path, full_json['filename'])
+        os.remove(annotation_path)
 
-            if fsi.annotations is None:  # Shouldn't happen but whatevs
-                break
-
-            # Delete thumbnails
-            thumbnail_paths = [self._get_thumbnail_path_from_source_identifier(fsi, annotation) for annotation in fsi.annotations]
-            for thumbnail_path in thumbnail_paths:
-                try:
-                    os.remove(thumbnail_path)
-                except FileNotFoundError:
-                    pass
+        # for fsi in [object['filename']]:
+        #     image_path = self._get_image_path_from_source_identifier(fsi)
+        #     try:
+        #         os.remove(image_path)
+        #     except FileNotFoundError:
+        #         pass
+        #
+        #     if fsi.annotations is None:  # Shouldn't happen but whatevs
+        #         break
+        #
+        #     # Delete thumbnails
+        #     thumbnail_paths = [self._get_thumbnail_path_from_source_identifier(fsi, annotation) for annotation in fsi.annotations]
+        #     for thumbnail_path in thumbnail_paths:
+        #         try:
+        #             os.remove(thumbnail_path)
+        #         except FileNotFoundError:
+        #             pass
         # Delete from mongoDB
         # db.delete_one(query)
 

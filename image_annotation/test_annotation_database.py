@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 from tinydb import Query
 
+from artemis.image_processing.image_utils import imread_any_path
 from image_annotation.annotated_image_serialization import load_tiff_metadata
 from image_annotation.annotation_database import AnnotationDatabaseAccessor, Annotation, FrameSourceInfo, FrameSourceInfoAndImage
 from image_annotation.goto_queries import RecordQuery
@@ -71,7 +72,22 @@ def test_annotation_db_access():
         assert db.lookup_frame_source_info_from_identifier(source_id) is None
         assert db.query_annotation_data() == []
 
-        db.save_annotated_image(frame_source_info=source_info, image=image, save_image=True, save_thumbnails=True)
+        reloaded_fsii = db.load_frame_source_info_and_image(source_id)
+        assert reloaded_fsii is None
+
+        path = db.save_annotated_image(fsii)
+
+        # Check that it is saved as a plain old image
+        assert os.path.exists(path)
+        assert np.array_equal(imread_any_path(path), image)
+
+        # Test that the data is reloaded faithfully via the accessor
+        reloaded_fsii = db.load_frame_source_info_and_image(source_id)
+        assert reloaded_fsii.frame_source_info == fsii.frame_source_info
+        assert np.array_equal(reloaded_fsii.image, fsii.image)
+        reloaded_ann_image = db.load_annotated_image(source_id)
+        assert reloaded_ann_image.annotations == fsii.frame_source_info.annotations
+        assert np.array_equal(reloaded_ann_image.image, fsii.image)
 
         # Empty query should return all annotations
         retrieved_source_infos = db.query_annotation_data()
@@ -80,11 +96,11 @@ def test_annotation_db_access():
         assert db.lookup_frame_source_info_from_identifier(source_id) == source_info
 
         # Query with no match
-        retrieved_source_infos = db.query_annotation_data(Query().record_query.nickname == 'non-existent')
+        retrieved_source_infos = db.query_annotation_data(Query().data.record_query.nickname == 'non-existent')
         assert len(retrieved_source_infos) == 0
 
         # Query by source identifier
-        retrieved_source_infos = db.query_annotation_data(Query().record_query.nickname == 'test_collection')
+        retrieved_source_infos = db.query_annotation_data(Query().data.record_query.nickname == 'test_collection')
         assert len(retrieved_source_infos) == 1
         assert retrieved_source_infos[0] == source_info
 
@@ -95,14 +111,24 @@ def test_annotation_db_access():
         assert len(retrieved_index_info_pairs) == 1
         assert retrieved_index_info_pairs[0] == replace(source_info, source_file=multipath, source_index=1)
 
+        # Mkae sure we get nothing when we query for non-existent paths or empty paths
+        multipath = ''
+        retrieved_index_info_pairs = db.query_annotation_data_from_path(multipath)
+        assert len(retrieved_index_info_pairs) == 0
+        multipath = '/some/nonexistent/path.jpg;/some/other/nonexistent/path.jpg'
+        retrieved_index_info_pairs = db.query_annotation_data_from_path(multipath)
+        assert len(retrieved_index_info_pairs) == 0
+
         retrieved_annotated_image = db.load_annotated_image(source_id)
         assert retrieved_annotated_image is not None
         assert retrieved_annotated_image.annotations == source_info.annotations
         assert np.array_equal(retrieved_annotated_image.image, image)
         assert db.load_annotated_image('non-identifier') is None
 
+        assert os.path.exists(path)
         db.delete_annotation_data(source_id)
         assert db.lookup_frame_source_info_from_identifier(source_id) is None
+        assert not os.path.exists(path)
 
 
 def test_serialization():
@@ -144,11 +170,12 @@ def test_serialization():
 def test_write_annotation_to_directory_with_nonlatin():
 
     with hold_tempdir() as tempdir:
-        subdir = os.path.join(tempdir, '中文')
-        db = AnnotationDatabaseAccessor(subdir, source_data_base_path=None)
+        # Chinese, cyrillic, greek, accented latin
+        subdir = os.path.join(tempdir, '中文-ру-ελ-é')
+        db = AnnotationDatabaseAccessor(annotation_folder_path=subdir, source_data_base_path=None)
         fsii = load_test_fsi_image_from_image_file()
         assert db.load_annotated_image(fsii.frame_source_info.get_source_identifier()) is None
-        db.save_annotated_image(frame_source_info=fsii.frame_source_info, image=fsii.image, save_image=True, save_thumbnails=True)
+        db.save_annotated_image(fsii=fsii)
         assert os.path.exists(subdir)
         fsii_reloaded = db.load_annotated_image(fsii.frame_source_info.get_source_identifier())
         assert fsii_reloaded is not None
@@ -157,6 +184,7 @@ def test_write_annotation_to_directory_with_nonlatin():
 
 @pytest.mark.skip(reason="This test is just to help us understand cv2 failure for non-unicode chars")
 def test_cv2_read_write_non_unicode():
+    """ It fails on windows because https://github.com/opencv/opencv/issues/4292 """
     with hold_tempdir() as tempdir:
         image = load_test_fsi_image_from_image_file().image
         path = os.path.join(tempdir, 'abc.png')
@@ -170,9 +198,8 @@ def test_cv2_read_write_non_unicode():
         assert np.array_equal(image, reimg)
 
 
-
 if __name__ == '__main__':
-    # test_annotation_db_access()
-    # test_serialization()
+    test_annotation_db_access()
+    test_serialization()
     test_write_annotation_to_directory_with_nonlatin()
     # test_cv2_read_write_non_unicode()
