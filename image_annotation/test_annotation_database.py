@@ -3,6 +3,7 @@ from dataclasses import replace
 
 import cv2
 import numpy as np
+import pytest
 from tinydb import Query
 
 from image_annotation.annotated_image_serialization import load_tiff_metadata
@@ -154,7 +155,24 @@ def test_write_annotation_to_directory_with_nonlatin():
         assert np.array_equal(fsii.image, fsii_reloaded.image)
 
 
+@pytest.mark.skip(reason="This test is just to help us understand cv2 failure for non-unicode chars")
+def test_cv2_read_write_non_unicode():
+    with hold_tempdir() as tempdir:
+        image = load_test_fsi_image_from_image_file().image
+        path = os.path.join(tempdir, 'abc.png')
+        path_enc = os.path.join(tempdir, '中文.png')
+        cv2.imwrite(path, image)
+        assert os.path.exists(path)
+        os.rename(path, path_enc)
+        assert os.path.exists(path_enc)
+        reimg = cv2.imread(path_enc)
+        assert reimg is not None
+        assert np.array_equal(image, reimg)
+
+
+
 if __name__ == '__main__':
     # test_annotation_db_access()
     # test_serialization()
     test_write_annotation_to_directory_with_nonlatin()
+    # test_cv2_read_write_non_unicode()
