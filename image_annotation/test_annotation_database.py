@@ -16,6 +16,7 @@ from artemis.general.utils_for_testing import hold_tempdir
 from artemis.image_processing.media_metadata import read_image_geodata_or_none
 from artemis.image_processing.video_segment import VideoSegment
 from image_annotation.geo_utils import haversine_distance
+from video_scanner.ui.builder import EagleEyesScanBuilder
 
 
 def load_test_fsi_image_from_image_file() -> FrameSourceInfoAndImage:
@@ -196,6 +197,13 @@ def test_cv2_read_write_non_unicode():
         reimg = cv2.imread(path_enc)
         assert reimg is not None
         assert np.array_equal(image, reimg)
+
+
+# def test_update_database():
+#
+#     with EagleEyesScanBuilder.hold_for_testing() as builder:
+#         builder: EagleEyesScanBuilder
+#
 
 
 if __name__ == '__main__':

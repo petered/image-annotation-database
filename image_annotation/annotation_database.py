@@ -1,5 +1,6 @@
 import base64
 import os
+import traceback
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from typing import List, Optional, Tuple, Any, Sequence, Union
@@ -15,7 +16,7 @@ from artemis.general.item_cache import CacheDict
 from artemis.general.utils_for_testing import hold_tempdir
 from artemis.image_processing.decorders import DecordDecorder
 from artemis.image_processing.image_builder import ImageBuilder
-from artemis.image_processing.image_utils import BoundingBox, BGRColors
+from artemis.image_processing.image_utils import BoundingBox, BGRColors, imread_any_path
 from artemis.image_processing.video_frame import FrameGeoData
 from artemis.image_processing.video_reader import VideoReader
 from image_annotation.annotated_image_serialization import load_tiff_with_metadata, save_tiff_with_metadata, TiffImageMetadata, GPSInfo, copy_image_and_patch_on_metadata
@@ -23,6 +24,7 @@ from image_annotation.goto_queries import GotoQuery, RecordQuery, source_identif
 from image_annotation.basic_utils import is_image_path
 from image_annotation.file_utils import get_hash_for_file
 from image_annotation.serialization import DataClassWithNumpyPreSerializer
+from video_scanner.app_utils.directory import EagleEyesDirectory
 
 
 # Assuming JSONSerializer is imported from your pip package
@@ -181,7 +183,7 @@ class FrameSourceInfoAndImage:
         else:
             metadata = TiffImageMetadata(date_time=None, jsonable_metadata=metadata_dict)
 
-        # If we have not specified a particu`lar
+        # If we have not specified a particular
         _, source_file_ext = os.path.split(self.frame_source_info.source_file.lower())
 
         we_can_just_copy_the_file = is_image_path(self.frame_source_info.source_file) and os.path.exists(self.frame_source_info.source_file)
@@ -525,7 +527,34 @@ def hold_temp_annotation_db_singleton() -> AnnotationDatabaseAccessor:
             yield db_accessor
 
 
+def update_annotation_db_if_needed(
+        directory: EagleEyesDirectory,
+        db_accessor: AnnotationDatabaseAccessor,
+    ) -> None:
+    old_db_folder = directory.eagle_eyes_hidden_path('annotations')
+    old_db_loc = directory.eagle_eyes_hidden_path('annotations/db.json')
+    if os.path.exists(old_db_loc):
+        print("Found annotations in old location... Moving to new folder")
+        old_db = TinyDB(old_db_loc)
+        for doc in old_db.all():
+            fsi = DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, doc)
+            old_image_path = os.path.join(old_db_folder, 'images', fsi.frame_hash_identifier()+'.png')
+            image = imread_any_path(old_image_path)
+            fsii = FrameSourceInfoAndImage(frame_source_info=fsi, image=image)
+            new_path = db_accessor.save_annotated_image(fsii)
+            print(f"Print moved annotation to {new_path}")
+        print('Done!  Annotations moved to new location.  Backing up old folder...')
+        os.rename(old_db_folder, os.path.join(os.path.split(old_db_folder)[0], 'annotations_backup'))
+
+
+def run_db_update_script_now():
+    eedir=EagleEyesDirectory()
+    with hold_annotation_db_singleton(eedir.get_eagle_eyes_annotation_folder_path()) as db_accessor:
+        update_annotation_db_if_needed(directory=eedir, db_accessor=db_accessor)
+
+
 # Example usage
 if __name__ == "__main__":
-    db_accessor = AnnotationDatabaseAccessor('/path/to/source_data', '/path/to/annotations')
+    # db_accessor = AnnotationDatabaseAccessor('/path/to/source_data', '/path/to/annotations')
     # Use db_accessor for various operations
+    run_db_update_script_now()

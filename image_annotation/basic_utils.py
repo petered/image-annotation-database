@@ -1,6 +1,6 @@
 import os
 
-IMAGE_FILE_EXTENSIONS = '.jpg', '.jpeg', '.png', 'tiff'
+IMAGE_FILE_EXTENSIONS = '.jpg', '.jpeg', '.png', '.tiff'
 VIDEO_FILE_EXTENSIONS = '.mp4', '.mov', '.avi', '.mpg', '.mpeg', '.m4v', '.mkv', '.wmv', '.flv', '.webm', '.gif'
 MEDIA_FILE_EXTENSIONS = IMAGE_FILE_EXTENSIONS + VIDEO_FILE_EXTENSIONS
 
