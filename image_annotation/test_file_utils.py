@@ -4,7 +4,7 @@ import shutil
 from ulid import ULID
 
 from image_annotation.file_utils import get_hash_for_file, create_sync_mapping_to_flat_dir, is_not_hidden_file, create_ulid_for_file, DroneDataDirectory
-from artemis.fileman.file_utils import iter_sync_files, flip_bit_in_file
+from artemis.fileman.file_utils import iter_sync_files, flip_bit_in_file, walk_fullpath
 from artemis.general.debug_utils import easy_profile
 from artemis.general.hashing import compute_fixed_hash
 from artemis.general.utils_for_testing import hold_tempfile, hold_tempdir
@@ -108,8 +108,21 @@ def test_sync_mapping():
                 print(progress.get_sync_progress_string())
 
 
+def test_walk_fullpath():
+
+    with hold_tempdir() as fdir:
+        os.makedirs(os.path.join(fdir, 'subdir1'))
+        with open(os.path.join(fdir, 'subdir1', 'aaa.txt'), 'w') as f:
+            f.write('aaa')
+        with open(os.path.join(fdir, 'bbb.txt'), 'w') as f:
+            f.write('bbb')
+
+        assert set(walk_fullpath(fdir)) == {os.path.join(fdir, 'subdir1', 'aaa.txt'), os.path.join(fdir, 'bbb.txt')}
+
+
 if __name__ == '__main__':
     test_read_file_with_non_ascii_path()
     test_get_hash_for_file()
     test_sync_mapping()
     test_create_ulid_for_file()
+    test_walk_fullpath()

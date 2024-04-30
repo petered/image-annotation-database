@@ -71,6 +71,7 @@ DataClassWithNumpyPreSerializer = Serializer(
         tuple: lambda cls, lst: tuple_deserialization(cls, lst, deserialization_func=DataClassWithNumpyPreSerializer.deserialize),  # For now...
         # np.ndarray: lambda cls, data: msgpack_numpy.unpackb(data),  # ERROR WAS HERE...
         Enum: lambda cls, data: cls(data),
+        # Any: noop_deserialization,
         ICustomPreserializer: lambda cls, data: cls.deserialize(data)
     }
 )
