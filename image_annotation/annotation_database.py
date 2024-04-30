@@ -3,6 +3,7 @@ import os
 import traceback
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import List, Optional, Tuple, Any, Sequence, Union
 
 import cv2
@@ -155,13 +156,15 @@ class FrameSourceInfoAndImage:
         os.makedirs(parent_dir, exist_ok=True)
 
         # We construct the filename using content-based hashing - so that
-        # a) We can share and pool files git cowithout working about name collisions
+        # a) We can share and pool files without worrying about name collisions
         # b) We have some way to look up the original source file if needed, if it has moved or been renamed.
         # Note... if source file is a directory (as in livestreams) or unavailable - we hash on the path
         # TODO: A more systematic way to do this - this all feels kind of ad-hoc
+        # Source reference hash is specific to the source file - we keep it separate so that we can look up the original source file if needed
         source_reference_hash = bytes_to_base32_string(get_hash_for_file(self.frame_source_info.source_file)) \
             if os.path.isfile(self.frame_source_info.source_file) else \
             compute_fixed_hash(self.frame_source_info.get_source_identifier())
+        # Remainder has is of the source info (detections, labels, etc)
         remainder_hash = compute_fixed_hash(self.frame_source_info, try_objects=True)
         source_file_name, _ = os.path.splitext(os.path.basename(self.frame_source_info.source_file))
         filename = f'{source_reference_hash[:8]}{remainder_hash[:8]}_{source_file_name}'
@@ -544,7 +547,7 @@ def update_annotation_db_if_needed(
             new_path = db_accessor.save_annotated_image(fsii)
             print(f"Print moved annotation to {new_path}")
         print('Done!  Annotations moved to new location.  Backing up old folder...')
-        os.rename(old_db_folder, os.path.join(os.path.split(old_db_folder)[0], 'annotations_backup'))
+        os.rename(old_db_folder, os.path.join(os.path.split(old_db_folder)[0], f'annotations_backup_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'))
 
 
 def run_db_update_script_now():
