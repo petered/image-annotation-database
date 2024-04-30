@@ -544,6 +544,7 @@ def update_annotation_db_if_needed(
             new_path = db_accessor.save_annotated_image(fsii)
             print(f"Print moved annotation to {new_path}")
         print('Done!  Annotations moved to new location.  Backing up old folder...')
+        old_db.close()
         os.rename(old_db_folder, os.path.join(os.path.split(old_db_folder)[0], 'annotations_backup'))
 
 
