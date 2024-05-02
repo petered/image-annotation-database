@@ -1,5 +1,6 @@
 import base64
 import os
+import shutil
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from typing import List, Optional, Tuple, Any, Sequence, Union
@@ -12,7 +13,7 @@ from tinydb.table import Document
 from artemis.general.custom_types import BGRImageArray
 from artemis.general.hashing import compute_fixed_hash, HashRep
 from artemis.general.item_cache import CacheDict
-from artemis.general.utils_for_testing import hold_tempdir
+from artemis.general.utils_for_testing import hold_tempdir, hold_tempfile
 from artemis.image_processing.decorders import DecordDecorder
 from artemis.image_processing.image_builder import ImageBuilder
 from artemis.image_processing.image_utils import BoundingBox, BGRColors, imread_any_path
@@ -153,7 +154,7 @@ class FrameSourceInfoAndImage:
         os.makedirs(parent_dir, exist_ok=True)
 
         # We construct the filename using content-based hashing - so that
-        # a) We can share and pool files git cowithout working about name collisions
+        # a) We can share and pool files without worrying about name collisions
         # b) We have some way to look up the original source file if needed, if it has moved or been renamed.
         # Note... if source file is a directory (as in livestreams) or unavailable - we hash on the path
         # TODO: A more systematic way to do this - this all feels kind of ad-hoc
@@ -264,8 +265,6 @@ class AnnotationDatabaseAccessor:
         self._query_cache = CacheDict(buffer_length=query_cache_size)
         self._cache_dirty = True
 
-
-
     def _get_image_path_from_source_identifier(self, frame_source_info: FrameSourceInfo) -> str:
         source_id_str = compute_fixed_hash(frame_source_info.get_source_identifier(), hashrep=HashRep.BASE_32)
         return os.path.join(self._image_folder_path, f'{source_id_str}.png')
@@ -294,6 +293,23 @@ class AnnotationDatabaseAccessor:
         full_obj = dict(filename=filename, data=DataClassWithNumpyPreSerializer.serialize(frame_source_info))
         document = Document(full_obj, doc_id=database_key)
         self.db.upsert(document)
+
+    def get_hash_code(self) -> str:
+        image_names = sorted(f for f in os.listdir(self._image_folder_path) if is_image_path(f))
+        return compute_fixed_hash(image_names, hashrep=HashRep.BASE_32)[:8]
+
+    def save_as_zip(self, base_name = 'eagle_eyes_dataset', parent_folder: Optional[str] = None) -> None:
+        # The names of the files in the images folder should already be content-based hashes - so we can just hash based on those names, sorted
+        hash_code = self.get_hash_code()
+        zip_name = f'{base_name}_{hash_code}'
+        dataset_folder = os.path.abspath(os.path.join(self._image_folder_path, '..'))
+        parent_folder = parent_folder or os.path.abspath(os.path.join(dataset_folder, '..'))
+        zip_path = os.path.join(parent_folder, zip_name)+'.zip'
+        print(f"Saving database to {zip_path}...")
+        with hold_tempfile(path_if_successful=zip_path, ext='.zip') as temp_file:
+            shutil.make_archive(os.path.splitext(temp_file)[0], 'zip', dataset_folder)
+        print('... Done')
+        return zip_path
 
     def save_annotated_image(
             self,
@@ -465,6 +481,7 @@ class AnnotationDatabaseAccessor:
         # Delete image
         annotation_path = os.path.join(self._image_folder_path, full_json['filename'])
         os.remove(annotation_path)
+        print(f"Deleted annotation data for {source_identifier}")
 
         # for fsi in [object['filename']]:
         #     image_path = self._get_image_path_from_source_identifier(fsi)
