@@ -39,6 +39,27 @@ def display_dataclass_instance_without_defaults(instance: Any) -> str:
     return f'{instance.__class__.__name__}({", ".join([f"{k}={v}" for k, v in instance.__dict__.items() if v != instance.__class__.__dataclass_fields__[k].default])})'
 
 
+# ANNOTATION_VALUE_TO_STR = {
+# {
+#                                 '1: Object of Interest': 1,
+#                                 '2: Possibly worth investigating': 2,
+#                                 '3: Should Investigate': 3,
+#                                 '4: Definitive find': 4,
+#                             }
+
+
+ANNOTATION_VALUE_TO_STR = {
+    -1: 'Non-interesting detection',
+    0: 'Neutral',
+    1: 'Object of Interest',
+    2: 'Possibly worth investigating',
+    3: 'Should Investigate',
+    4: 'Definitive find',
+}
+
+ANNOTATION_STR_TO_VALUE = {v: k for k, v in ANNOTATION_VALUE_TO_STR.items()}
+
+
 @dataclass
 class Annotation:
     """ Annotation - saved to database """
@@ -52,6 +73,9 @@ class Annotation:
 
     def get_hash_identifier(self) -> str:
         return compute_fixed_hash((self.ijhw_box, self.value), try_objects=True, hashrep=HashRep.BASE_32)
+
+    def get_category_str(self) -> str:
+        return f"{self.value}: {ANNOTATION_VALUE_TO_STR.get(self.value, 'Unknown')}"
 
     def __repr__(self):
         return display_dataclass_instance_without_defaults(self)
