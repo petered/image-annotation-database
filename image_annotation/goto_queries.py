@@ -53,8 +53,8 @@ class GotoQuery(PlayStateQuery, RecordQuery):
         """
         # Remove the prefix, but don't require it
         query_string = query_string.strip()
-        if query_string.startswith('goto:'):
-            query_string = query_string[len('goto:'):].strip()
+        if query_string.startswith('goto?') or query_string.startswith('goto:'):  # The ":" is for backwards compatibility
+            query_string = query_string[len('goto?'):].strip()
 
         try:
             decoded_dict: Dict[str, Any()] = {k: v for k, v in (part.split('=') for part in query_string.split('&'))}
@@ -78,7 +78,7 @@ class GotoQuery(PlayStateQuery, RecordQuery):
 
         """ Convert this to a query string (&-separated key=value pairs) """
         # Go through all fields, and only include them if they differ from the default value
-        return 'goto:'+'&'.join(f'{f.name}={v}' for f in fields(self) if (v:=getattr(self, f.name)) != f.default or f.name=='index')
+        return 'goto?'+'&'.join(f'{f.name}={v}' for f in fields(self) if (v:=getattr(self, f.name)) != f.default or f.name=='index')
 
 
 @dataclass
