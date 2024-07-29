@@ -13,7 +13,38 @@ def test_srt_to_lat_long():
     # srt_path = AssetFiles.CUTBLOCK_SRT
     srt_path = asset_path_for_testing('data/cutblock.srt')
     items =read_dji_srt_file(srt_path)
-    print('here')
+
+    srt_path = DroneDataDirectory().get_file('test_data/misc/DJI_0289.SRT')
+    items =read_dji_srt_file(srt_path)
+    assert 40 < items[0].lat_long[0] < 60
+    assert -110 < items[0].lat_long[1] < 30
+    dt = items[0].get_datetime()
+    assert dt.year == 2024
+    assert dt.month == 7
+    assert dt.hour == 19
+
+    srt_path = DroneDataDirectory().get_file('test_data/misc/dji_2023-07-06_18-07-50_0005.srt')
+    items = read_dji_srt_file(srt_path)
+    assert 49 < items[0].lat_long[0] < 51
+    assert -124 < items[0].lat_long[1] < -123
+    dt = items[0].get_datetime()
+    assert dt.year == 2023
+    assert dt.month == 7
+    assert dt.tzname() == "PDT"
+
+    srt_path = DroneDataDirectory().get_file('test_data/misc/dji_2023-02-26_15-12-52_0168.srt')
+    items = read_dji_srt_file(srt_path)
+    assert 37 < items[0].lat_long[0] < 39
+    assert -124 < items[0].lat_long[1] < -123
+    dt = items[0].get_datetime()
+    assert dt.year == 2023
+    assert dt.month == 2
+    assert dt.tzname() == "PST"
+
+    items = read_dji_srt_file(DroneDataDirectory().get_file('test_data/misc/dji_2023-05-03_00-37-54_0316.srt'))
+    assert ((dt:=items[0].get_datetime()).year, dt.month, dt.day)==(2023, 5, 2)
+    items = read_dji_srt_file(DroneDataDirectory().get_file('test_data/misc/dji_2023-05-03_01-47-34_0777.srt'))
+    ((dt := items[0].get_datetime()).year, dt.month, dt.day) == (2023, 5, 2)
 
 
 def test_get_exif_from_image():
@@ -33,7 +64,7 @@ def test_srt_to_kml():
     with hold_tempdir() as fdir:
 
         srt_to_kml(
-            srt_path=DroneDataDirectory().get_file('e2_dual/raw/dji_2023-05-03_00-37-54_0316.srt'),
+            srt_path=DroneDataDirectory().get_file('test_data/misc/dji_2023-05-03_00-37-54_0316.srt'),
             kml_path=os.path.join(fdir, 'Flight1.kml'),
             kml_object_name='Flight1'
         )
@@ -47,11 +78,11 @@ def test_srt_to_kml():
         #     kml_path=os.path.join(fdir, 'Flight4.kml'),
         #     kml_object_name='Flight4'
         # )
-        # srt_to_kml(
-        #     srt_path=DroneDataDirectory().get_file('dji_air2s/raw/dji_2023-05-03_01-49-36_0778.srt'),
-        #     kml_path=os.path.join(fdir, 'Flight5.kml'),
-        #     kml_object_name='Flight5'
-        # )
+        srt_to_kml(
+            srt_path=DroneDataDirectory().get_file('test_data/misc/dji_2023-05-03_01-49-36_0778.srt'),
+            kml_path=os.path.join(fdir, 'Flight5.kml'),
+            kml_object_name='Flight5'
+        )
 
 
 if __name__ == "__main__":

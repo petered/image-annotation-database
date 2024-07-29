@@ -10,16 +10,21 @@ from image_annotation.kml_files import write_kml_file
 
 def read_dji_srt_file(srt_path: str) -> Sequence[FrameGeoData]:
     subs = pysrt.open(srt_path)
+
+    date_time_match = re.search(r"(\d\d\d\d\.\d\d\.\d\d \d\d:\d\d:\d\d)", subs.text)
+    start_epoch_time_us = int(datetime.strptime(date_time_match.group(1), "%Y.%m.%d %H:%M:%S").timestamp()*1000000) if date_time_match else 0
     items = []
     for i, item in enumerate(subs):
 
-        new_format_match = re.search(r"GPS \(([-\w\.]+), ([-\w\.]+), ([-\w\.]+)\)", item.text_without_tags.strip('\n'))
+        # new_format_match = re.search(r"GPS \(([-\w\.]+), ([-\w\.]+), ([-\w\.]+)\)", item.text_without_tags.strip('\n'))
+        new_format_match = re.search(r"GPS ?\(([-\w\.]+), ?([-\w\.]+), ?([-\w\.]+)\)", item.text_without_tags.strip('\n'))
+
         if new_format_match:
             long, lat, alt = new_format_match.groups()
             geodata = FrameGeoData(
                 lat_long=(float(lat), float(long)),
                 altitude_from_home=float(alt),
-                epoch_time_us=int(item.start.ordinal*1000)
+                epoch_time_us=start_epoch_time_us + int(item.start.ordinal*1000)
                 )
             items.append(geodata)
         else:
