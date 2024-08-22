@@ -202,6 +202,9 @@ class FrameSourceInfoAndImage:
     def replace_annotations(self, annotations: Optional[Sequence[Annotation]]) -> 'FrameSourceInfoAndImage':
         return replace(self, frame_source_info=replace(self.frame_source_info, annotations=list(annotations)))
 
+    def to_annotated_image(self) -> 'AnnotatedImage':
+        return AnnotatedImage(image=self.image, annotations=self.frame_source_info.annotations)
+
 
 @dataclass
 class AnnotatedImage:
@@ -257,13 +260,15 @@ class AnnotationDatabaseAccessor:
                  thumbnail_size: Tuple[int, int] = (128, 128),
                  query_cache_size=3,  # Cache the last 3 queries
                  ):
-        os.makedirs(annotation_folder_path, exist_ok=True)
-        self.db = TinyDB(os.path.join(annotation_folder_path, 'db_cache.json'))
+        annotation_folder_path = os.path.expanduser(annotation_folder_path)
+        cache_path = os.path.join(annotation_folder_path, '.cache')
+        os.makedirs(cache_path, exist_ok=True)
+        self.db = TinyDB(os.path.join(cache_path, 'db_cache.json'))
         self._thumbnail_size = thumbnail_size
         self._source_data_base_path = source_data_base_path
-        self._image_folder_path = os.path.join(annotation_folder_path, 'images')
-        self._thumbnail_folder_path = os.path.join(annotation_folder_path, 'thumbnails')
-        os.makedirs(self._image_folder_path, exist_ok=True)
+        self._image_folder_path = annotation_folder_path
+        self._thumbnail_folder_path = os.path.join(cache_path, 'thumbnails')
+        # os.makedirs(self._image_folder_path, exist_ok=True)
         os.makedirs(self._thumbnail_folder_path, exist_ok=True)
         self._query_cache = CacheDict(buffer_length=query_cache_size)
         self._cache_dirty = True
@@ -419,6 +424,8 @@ class AnnotationDatabaseAccessor:
                 .filename == 'some_file.ann.jpg'
         :return: A list of FrameSourceInfo objects that match the query
         """
+        if self._cache_dirty:
+            self.update_cache()
         if query is None:
             full_info = self.db.all()
             return [DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, doc['data']) for doc in full_info]
