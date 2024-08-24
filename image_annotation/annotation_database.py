@@ -380,7 +380,7 @@ class AnnotationDatabaseAccessor:
         frame_source_info_json = full_json['data']
         return DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, frame_source_info_json)
 
-    def load_frame_source_info_and_image(self, frame_source_info_id: str) -> Optional[FrameSourceInfoAndImage]:
+    def get_dataset_image_path(self, frame_source_info_id: str) -> Optional[str]:
         if self._cache_dirty:
             self.update_cache()
         database_key = get_fixed_hash_from_frame_source_info(frame_source_info_id)
@@ -389,6 +389,10 @@ class AnnotationDatabaseAccessor:
             return None
         filename_key = full_json['filename']
         image_path = os.path.join(self._image_folder_path, filename_key)
+        return image_path
+
+    def load_frame_source_info_and_image(self, frame_source_info_id: str) -> Optional[FrameSourceInfoAndImage]:
+        image_path = self.get_dataset_image_path(frame_source_info_id)
         return FrameSourceInfoAndImage.load_from_image_file(image_path)
         #
         # key = get_fixed_hash_from_frame_source_info(frame_source_info_id)
