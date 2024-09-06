@@ -7,6 +7,7 @@ from PIL import Image
 import numpy as np
 import json
 import piexif
+import os
 from piexif import GPSIFD
 from piexif.helper import UserComment
 
@@ -189,6 +190,7 @@ def load_tiff_metadata(path: str) -> TiffImageMetadata:
 
 def load_tiff_with_metadata(path: str) -> Tuple[np.ndarray, TiffImageMetadata]:
     """Load an image array and its JSON serialized metadata from a TIFF file."""
+    assert os.path.exists(path), f"File not found: {path}"
     image = Image.open(path)
     image_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 

@@ -4,7 +4,7 @@ import shutil
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import List, Optional, Tuple, Any, Sequence, Union
+from typing import List, Optional, Tuple, Any, Sequence, Union, TypedDict, Mapping
 
 import cv2
 from more_itertools import first
@@ -74,6 +74,16 @@ class FrameSourceInfo:
     geodata: Optional[FrameGeoData] = None
     record_query: Optional[RecordQuery] = None  # Used to query records associated with this detection
 
+    def get_name(self, default: Optional[str] = None) -> str:
+        if self.record_query is None:
+            return default or os.path.basename(os.path.splitext(self.source_file)[0])
+        elif self.record_query.nickname is not None:
+            return self.record_query.nickname
+        elif self.record_query.case is not None:
+            return self.record_query.case
+        else:
+            return default or os.path.basename(os.path.splitext(self.source_file)[0])
+
     def frame_hash_identifier(self) -> str:
         return compute_fixed_hash(self.get_source_identifier(), hashrep=HashRep.BASE_32)
 
@@ -136,11 +146,43 @@ class FrameSourceInfoAndImage:
 
     @classmethod
     def load_from_image_file(cls, path: str) -> 'FrameSourceInfoAndImage':
+
         image, metadata = load_tiff_with_metadata(path)
         jsonable_metadata = dict(metadata.jsonable_metadata)
         del jsonable_metadata['_fsii_version']  # If we change formats - we can use the version to help figure out how to read.
         frame_source_info = DataClassWithNumpyPreSerializer.deserialize(cls=FrameSourceInfo, serialized_obj=metadata.jsonable_metadata)
         return cls(frame_source_info=frame_source_info, image=image)
+
+    @classmethod
+    def from_unsourced_image(cls, image: BGRImageArray, annotations: Optional[Sequence[Annotation]] = None) -> 'FrameSourceInfoAndImage':
+        return cls(frame_source_info=FrameSourceInfo(source_file='', annotations=annotations), image=image)
+
+    def get_unique_reference_name(self) -> str:
+
+        # We construct the filename using content-based hashing - so that
+        # a) We can share and pool files without worrying about name collisions
+        # b) We have some way to look up the original source file if needed, if it has moved or been renamed.
+        # Note... if source file is a directory (as in livestreams) or unavailable - we hash on the path
+        # TODO: A more systematic way to do this - this all feels kind of ad-hoc
+        # Source reference hash is specific to the source file - we keep it separate so that we can look up the original source file if needed
+
+        # source_reference_hash = bytes_to_base32_string(get_hash_for_file(self.frame_source_info.source_file)) \
+        #     if self.frame_source_info.source_file is not None and os.path.isfile(self.frame_source_info.source_file) else \
+        #     compute_fixed_hash(self.frame_source_info.get_source_identifier()) \
+        #     if self.frame_source_info.source_file is not None else \
+        #     compute_fixed_hash(self.image)
+
+        source_reference_hash = compute_fixed_hash(self.image)
+
+        # Remainder has is of the source info (detections, labels, etc)
+        remainder_hash = compute_fixed_hash(self.frame_source_info, try_objects=True)
+        source_file_name, _ = os.path.splitext(os.path.basename(self.frame_source_info.source_file)) if self.frame_source_info.source_file is not None else ('', '')
+        filename = f'{source_reference_hash[:8]}{remainder_hash[:8]}'
+        if self.frame_source_info.source_file:
+            filename += f"_{source_file_name}"
+        if self.frame_source_info.source_file and not is_image_path(self.frame_source_info.source_file):
+            filename += f"_{self.frame_source_info.source_index}"
+        return filename
 
     def save_to_image_file(self, parent_dir: str) -> str:
         """
@@ -154,22 +196,7 @@ class FrameSourceInfoAndImage:
         assert not ext, f"Please specify an extensionless path.  You specified: {parent_dir}"
         os.makedirs(parent_dir, exist_ok=True)
 
-        # We construct the filename using content-based hashing - so that
-        # a) We can share and pool files without worrying about name collisions
-        # b) We have some way to look up the original source file if needed, if it has moved or been renamed.
-        # Note... if source file is a directory (as in livestreams) or unavailable - we hash on the path
-        # TODO: A more systematic way to do this - this all feels kind of ad-hoc
-        # Source reference hash is specific to the source file - we keep it separate so that we can look up the original source file if needed
-        source_reference_hash = bytes_to_base32_string(get_hash_for_file(self.frame_source_info.source_file)) \
-            if os.path.isfile(self.frame_source_info.source_file) else \
-            compute_fixed_hash(self.frame_source_info.get_source_identifier())
-        # Remainder has is of the source info (detections, labels, etc)
-        remainder_hash = compute_fixed_hash(self.frame_source_info, try_objects=True)
-        source_file_name, _ = os.path.splitext(os.path.basename(self.frame_source_info.source_file))
-        filename = f'{source_reference_hash[:8]}{remainder_hash[:8]}_{source_file_name}'
-        extensionless_path = os.path.join(parent_dir, filename)
-        if not is_image_path(self.frame_source_info.source_file):
-            extensionless_path += f"_{self.frame_source_info.source_index}"
+        extensionless_path = os.path.join(parent_dir, self.get_unique_reference_name())
 
         metadata_dict = DataClassWithNumpyPreSerializer.serialize(self.frame_source_info)
         metadata_dict['_fsii_version'] = self._fsii_version
@@ -186,9 +213,9 @@ class FrameSourceInfoAndImage:
             metadata = TiffImageMetadata(date_time=None, jsonable_metadata=metadata_dict)
 
         # If we have not specified a particular
-        _, source_file_ext = os.path.split(self.frame_source_info.source_file.lower())
+        _, source_file_ext = os.path.split(self.frame_source_info.source_file.lower()) if self.frame_source_info.source_file is not None else ('', '')
 
-        we_can_just_copy_the_file = is_image_path(self.frame_source_info.source_file) and os.path.exists(self.frame_source_info.source_file)
+        we_can_just_copy_the_file = self.frame_source_info.source_file is not None and is_image_path(self.frame_source_info.source_file) and os.path.exists(self.frame_source_info.source_file)
 
         if we_can_just_copy_the_file:
             _, ext = os.path.splitext(self.frame_source_info.source_file)
@@ -248,12 +275,23 @@ class AnnotatedImage:
 # )
 
 
-def get_fixed_hash_from_frame_source_info(source_identifier: str) -> int:
+def string_to_int_hash(source_identifier: str) -> int:
     # Use a seeded hash to ensure that the same source file always has the same hash
-    return compute_fixed_hash(source_identifier, hashrep=HashRep.INT)
+    return compute_fixed_hash(str(source_identifier), hashrep=HashRep.INT)
+
+
+class DatabaseEntryInfo(TypedDict):
+    filename: str  # Path of the annotation file in the database
+    key: str  # Name of the anno'tation file, without suffix
+    data: str  # Serialized frame source info object
+
+
 
 
 class AnnotationDatabaseAccessor:
+
+    VERSION = 1
+
     def __init__(self,
                  annotation_folder_path: str,
                  source_data_base_path: Optional[str] = None,  # When source paths are relative, this is the base path
@@ -263,7 +301,25 @@ class AnnotationDatabaseAccessor:
         annotation_folder_path = os.path.expanduser(annotation_folder_path)
         cache_path = os.path.join(annotation_folder_path, '.cache')
         os.makedirs(cache_path, exist_ok=True)
-        self.db = TinyDB(os.path.join(cache_path, 'db_cache.json'))
+
+        def init_db():
+            db = TinyDB(db_path)
+            db.table('metadata').insert({'type': 'schema_version', 'version': self.VERSION})
+            return db
+
+        # Make sure the cache has the current format, otherwise delete it and start fresh
+        db_path = os.path.join(cache_path, 'db_cache.json')
+        if os.path.exists(db_path):
+            self.db = TinyDB(db_path)
+            metadata = self.db.table('metadata')
+            stored_version = metadata.get(Query().type == 'schema_version').get('version', None) if metadata else None
+            if stored_version != self.VERSION:
+                print(f"Database schema version {stored_version} does not match current version {self.VERSION}.  Deleting and starting fresh.")
+                os.remove(db_path)
+                self.db = init_db()
+        else:
+            self.db = init_db()
+
         self._thumbnail_size = thumbnail_size
         self._source_data_base_path = source_data_base_path
         self._image_folder_path = annotation_folder_path
@@ -294,12 +350,19 @@ class AnnotationDatabaseAccessor:
         return (Query().source_file == self._relativize_path(fs_info.source_file)) & (Query().source_index == fs_info.source_index)
 
     def get_n_frames_in_database(self) -> int:
+        if self._cache_dirty:
+            self.update_cache()
         return len(self.db)
 
     def _insert_filename_and_fsi_into_database(self, filename: str, frame_source_info: FrameSourceInfo) -> None:
-        database_key = get_fixed_hash_from_frame_source_info(frame_source_info.get_source_identifier())
-        full_obj = dict(filename=filename, data=DataClassWithNumpyPreSerializer.serialize(frame_source_info))
+        # database_key = get_fixed_hash_from_frame_source_info(frame_source_info.get_source_identifier())
+        # database_key = get_fixed_hash_from_frame_source_info(os.path.basename(filename).split('.')[0])
+        # database_key = get_fixed_hash_from_frame_source_info(os.path.basename(filename).split('.')[0])
+        loader_key = os.path.basename(filename).split('.')[0]
+        database_key = string_to_int_hash(loader_key)
+        full_obj = DatabaseEntryInfo(filename=filename, data=DataClassWithNumpyPreSerializer.serialize(frame_source_info), key=loader_key)
         document = Document(full_obj, doc_id=database_key)
+        print(f"Storing key {loader_key} ({type(loader_key)}) into database under id {database_key}")
         self.db.upsert(document)
 
     def get_hash_code(self) -> str:
@@ -310,12 +373,15 @@ class AnnotationDatabaseAccessor:
         # The names of the files in the images folder should already be content-based hashes - so we can just hash based on those names, sorted
         hash_code = self.get_hash_code()
         zip_name = f'{base_name}_{hash_code}'
-        dataset_folder = os.path.abspath(os.path.join(self._image_folder_path, '..'))
-        parent_folder = parent_folder or os.path.abspath(os.path.join(dataset_folder, '..'))
+        parent_folder = parent_folder or os.path.abspath(os.path.join(self._image_folder_path, '..'))
         zip_path = os.path.join(parent_folder, zip_name)+'.zip'
         print(f"Saving database to {zip_path}...")
         with hold_tempfile(path_if_successful=zip_path, ext='.zip') as temp_file:
-            shutil.make_archive(os.path.splitext(temp_file)[0], 'zip', dataset_folder)
+            # print("making archive from", dataset_folder)
+            shutil.make_archive(os.path.splitext(temp_file)[0], 'zip', self._image_folder_path)
+            # above hangs, so instead we do
+
+            print("oh")
         print('... Done')
         return zip_path
 
@@ -344,7 +410,7 @@ class AnnotationDatabaseAccessor:
         #             os.makedirs(os.path.dirname(thumbnail_path), exist_ok=True)
         #             cv2.imwrite(thumbnail_path, thumbnail)
 
-        print(f"Saved {fsii.frame_source_info.source_file} to database along with {len(fsii.frame_source_info.annotations)} annotations")
+        print(f"Saved {fsii.frame_source_info.source_file} to database as {filename_key} along with {len(fsii.frame_source_info.annotations)} annotations")
         self._clear_caches()
 
         return image_path
@@ -373,26 +439,33 @@ class AnnotationDatabaseAccessor:
     def lookup_frame_source_info_from_identifier(self, source_identifier: str) -> Optional[FrameSourceInfo]:
         if self._cache_dirty:
             self.update_cache()
-        hash_code = get_fixed_hash_from_frame_source_info(source_identifier)
-        full_json = self.db.get(doc_id=hash_code)
+        hash_code = string_to_int_hash(source_identifier)
+        full_json: DatabaseEntryInfo = self.db.get(doc_id=hash_code)
         if full_json is None:
             return None
         frame_source_info_json = full_json['data']
         return DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, frame_source_info_json)
 
-    def get_dataset_image_path(self, frame_source_info_id: str) -> Optional[str]:
+    def get_dataset_image_path(self, key: str) -> Optional[str]:
+
         if self._cache_dirty:
             self.update_cache()
-        database_key = get_fixed_hash_from_frame_source_info(frame_source_info_id)
+        # database_key = get_fixed_hash_from_frame_source_info(frame_source_info_id)
+        # database_key = self.ge
+        database_key = string_to_int_hash(key)
         full_json = self.db.get(doc_id=database_key)
+        # full_json = self.db.search(Query().key == key)[0]
         if full_json is None:
+            print(f"Could not retreive key {key} ({type(key)} with index {database_key}")
             return None
         filename_key = full_json['filename']
         image_path = os.path.join(self._image_folder_path, filename_key)
         return image_path
 
-    def load_frame_source_info_and_image(self, frame_source_info_id: str) -> Optional[FrameSourceInfoAndImage]:
-        image_path = self.get_dataset_image_path(frame_source_info_id)
+    def load_frame_source_info_and_image(self, key: str) -> Optional[FrameSourceInfoAndImage]:
+        image_path = self.get_dataset_image_path(key)
+        if image_path is None:
+            return None
         return FrameSourceInfoAndImage.load_from_image_file(image_path)
         #
         # key = get_fixed_hash_from_frame_source_info(frame_source_info_id)
@@ -413,7 +486,7 @@ class AnnotationDatabaseAccessor:
         return AnnotatedImage(image=frame_source_info_and_image.image, annotations=frame_source_info_and_image.frame_source_info.annotations) \
             if frame_source_info_and_image else None
 
-    def query_annotation_data(self, query: Optional[Query] = None) -> List[FrameSourceInfo]:
+    def query_annotation_data(self, query: Optional[Query] = None) -> Mapping[str, FrameSourceInfo]:
         """
         :param query: The tinydb query object, e.g. Query().data.source_file == 'some_file.jpg'.  Full structure
             Query()
@@ -432,10 +505,10 @@ class AnnotationDatabaseAccessor:
             self.update_cache()
         if query is None:
             full_info = self.db.all()
-            return [DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, doc['data']) for doc in full_info]
+            return {doc['key']: DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, doc['data']) for doc in full_info}
         else:
             full_info = self.db.search(query)
-            return [DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, doc['data']) for doc in full_info]
+            return {doc['key']: DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, doc['data']) for doc in full_info}
 
     def query_text_in_any_field(self, text: str) -> List[FrameSourceInfo]:
         query = Query()
@@ -487,7 +560,7 @@ class AnnotationDatabaseAccessor:
 
         # query = self._source_identifier_to_query(source_identifier) if isinstance(source_identifier, str) else source_identifier
         # self.db.remove(query)
-        hash_code = get_fixed_hash_from_frame_source_info(source_identifier)
+        hash_code = string_to_int_hash(source_identifier)
         full_json = self.db.get(doc_id=hash_code)
         # object = DataClassWithNumpyPreSerializer.deserialize(FrameSourceInfo, full_json['data'])
         self.db.remove(doc_ids=[hash_code])
