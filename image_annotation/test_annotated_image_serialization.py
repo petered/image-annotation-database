@@ -1,9 +1,11 @@
 import datetime
+import os.path
 
 import numpy as np
 
 from artemis.general.utils_for_testing import hold_tempfile
-from image_annotation.annotated_image_serialization import save_tiff_with_metadata, load_tiff_with_metadata, TiffImageMetadata, GPSInfo
+from image_annotation.annotated_image_serialization import save_tiff_with_metadata, load_tiff_with_metadata, TiffImageMetadata, GPSInfo, copy_image_and_patch_on_metadata, load_tiff_metadata
+from image_annotation.file_utils import DroneDataDirectory
 
 
 def test_save_load_image_with_metadata():
@@ -48,5 +50,15 @@ def test_save_load_image_with_metadata():
         print("Test passed successfully!")
 
 
+def test_broken_copy():
+    src_file = os.path.expanduser("~/Downloads/DJI_20240815100643_0106_V.JPG")
+    metadata = load_tiff_metadata(src_file)
+    metadata.jsonable_metadata = {'test_string': 'x'*66000}
+    with hold_tempfile(ext='.JPG') as test_file_path:
+        copy_image_and_patch_on_metadata(src_file, test_file_path, metadata)
+
+
+
 if __name__ == "__main__":
-    test_save_load_image_with_metadata()
+    # test_save_load_image_with_metadata()
+    test_broken_copy()

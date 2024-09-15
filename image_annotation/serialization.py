@@ -11,7 +11,7 @@ import msgpack_numpy
 import numpy as np
 
 from artemis.general.utils_for_testing import hold_tempfile
-from dataclasses_serialization.serializer_base import Serializer, dict_serialization, dict_deserialization, noop_serialization, noop_deserialization, list_deserialization, dict_to_dataclass
+from dataclasses_serialization.serializer_base import Serializer, dict_serialization, dict_deserialization, noop_serialization, noop_deserialization, list_deserialization, dict_to_dataclass, DeserializationError
 from dataclasses_serialization.serializer_base.tuple import tuple_deserialization
 
 
@@ -44,11 +44,19 @@ class ISerializeableWithTransients(ICustomPreserializer):
                 if k not in self.get_transient_fields()}
 
 
+def robustly_deserialize_float(cls, val):
+    try:
+        return float(val)
+    except TypeError:
+        raise DeserializationError(f"Cannot deserialize {val} as float")
+
+
 DataClassWithNumpyPreSerializer = Serializer(
     serialization_functions={
         dict: lambda dct: dict_serialization(dct, key_serialization_func=DataClassWithNumpyPreSerializer.serialize, value_serialization_func=DataClassWithNumpyPreSerializer.serialize),
         list: lambda lst: list(map(DataClassWithNumpyPreSerializer.serialize, lst)),
         tuple: lambda lst: list(map(DataClassWithNumpyPreSerializer.serialize, lst)),
+
         (str, int, float, bool, type(None)): noop_serialization,
         np.float64: float,
         np.float32: float,
@@ -65,7 +73,8 @@ DataClassWithNumpyPreSerializer = Serializer(
         dict: lambda cls, dct: dict_deserialization(cls, dct, key_deserialization_func=DataClassWithNumpyPreSerializer.deserialize,
                                                     value_deserialization_func=DataClassWithNumpyPreSerializer.deserialize),
         list: lambda cls, lst: list_deserialization(cls, lst, deserialization_func=DataClassWithNumpyPreSerializer.deserialize),
-        (str, int, float, bool, type(None)): noop_deserialization,
+        float: robustly_deserialize_float,  # Lets us cast ints to floats automatically, which should be fine.
+        (str, int, bool, type(None)): noop_deserialization,
         np.ndarray: noop_deserialization,
         # tuple: lambda cls, lst: tuple(DataClassWithNumpyPreSerializer.deserialize(nested_cls, v) for nested_cls, v in zip_equal(get_args(cls), lst)),  # For now...
         tuple: lambda cls, lst: tuple_deserialization(cls, lst, deserialization_func=DataClassWithNumpyPreSerializer.deserialize),  # For now...

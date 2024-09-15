@@ -449,9 +449,9 @@ class AnnotationDatabaseAccessor:
                 query.data.annotations.any(query.tags.any(text))
             )
 
-    def query_annotation_data_from_path_and_source_index(self, path: str, source_index: int) -> Optional[FrameSourceInfo]:
-        fsis = self.query_annotation_data_from_path(path)
-        return first((fsi for fsi in fsis if fsi.source_index == source_index), default=None)
+    def query_annotation_data_from_path_and_source_index(self, path: str, source_index: int, source: str) -> Optional[FrameSourceInfo]:
+        fsis: Sequence[FrameSourceInfo] = self.query_annotation_data_from_path(path)
+        return first((fsi for fsi in fsis if fsi.source_index == source_index and fsi.source == source), default=None)
 
     def query_annotation_data_from_path(self, path: str) -> Sequence[FrameSourceInfo]:
         """
