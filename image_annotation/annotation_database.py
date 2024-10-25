@@ -151,7 +151,8 @@ class FrameSourceInfo:
 class FrameSourceInfoAndImage:
     frame_source_info: FrameSourceInfo
     image: BGRImageArray
-    _fsii_version = 1
+    _fsii_version = 2
+    # 2: Remove file from record query
 
     @classmethod
     def from_frame_source_info(cls, frame_source_info: FrameSourceInfo) -> 'FrameSourceInfoAndImage':
@@ -194,8 +195,10 @@ class FrameSourceInfoAndImage:
         if not is_image_path(self.frame_source_info.source_file):
             extensionless_path += f"_{self.frame_source_info.source_index}"
 
-        metadata_dict = DataClassWithNumpyPreSerializer.serialize(self.frame_source_info)
-        metadata_dict['_fsii_version'] = self._fsii_version
+        # Remove the "file" field of the RecordQuery because it can be very large for image collections and exceeds max EXIF size for images.
+        fsi = replace(self.frame_source_info, record_query=replace(self.frame_source_info.record_query, file=None) if self.frame_source_info.record_query else None)
+        jsonable_metadata = DataClassWithNumpyPreSerializer.serialize(fsi)
+        jsonable_metadata['_fsii_version'] = self._fsii_version
         geodata = self.frame_source_info.geodata
         if geodata is not None:
             lat, long = geodata.lat_long
@@ -203,10 +206,10 @@ class FrameSourceInfoAndImage:
             metadata = TiffImageMetadata(
                 date_time=dt,
                 gps_info=GPSInfo(latitude=lat, longitude=long, altitude=self.frame_source_info.geodata.altitude_from_sea) if self.frame_source_info.geodata else None,
-                jsonable_metadata=metadata_dict
+                jsonable_metadata=jsonable_metadata
             )
         else:
-            metadata = TiffImageMetadata(date_time=None, jsonable_metadata=metadata_dict)
+            metadata = TiffImageMetadata(date_time=None, jsonable_metadata=jsonable_metadata)
 
         # If we have not specified a particular
         _, source_file_ext = os.path.split(self.frame_source_info.source_file.lower())
@@ -290,8 +293,6 @@ class AnnotationDatabaseAccessor:
         os.makedirs(self._thumbnail_folder_path, exist_ok=True)
         self._query_cache = CacheDict(buffer_length=query_cache_size)
         self._cache_dirty = True
-
-
 
     def _get_image_path_from_source_identifier(self, frame_source_info: FrameSourceInfo) -> str:
         source_id_str = compute_fixed_hash(frame_source_info.get_source_identifier(), hashrep=HashRep.BASE_32)

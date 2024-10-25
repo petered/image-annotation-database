@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from tinydb import Query
 
-from artemis.image_processing.image_utils import imread_any_path
+from artemis.image_processing.image_utils import imread_any_path, create_gap_image
 from image_annotation.annotated_image_serialization import load_tiff_metadata
 from image_annotation.annotation_database import AnnotationDatabaseAccessor, Annotation, FrameSourceInfo, FrameSourceInfoAndImage
 from image_annotation.goto_queries import RecordQuery
@@ -199,11 +199,32 @@ def test_cv2_read_write_non_unicode():
         assert np.array_equal(image, reimg)
 
 
-# def test_update_database():
-#
-#     with EagleEyesScanBuilder.hold_for_testing() as builder:
-#         builder: EagleEyesScanBuilder
-#
+def test_write_annotation_with_huge_file_count():
+    """
+    Reproduces bug where in large image collections the metadata object becomes too large to fit in the exif
+        exif = b"\xff\xe1" + struct.pack(">H", len(exif) + 2) + exif
+        struct.error: 'H' format requires 0 <= number <= 65535
+
+    We resolve this by ommitting the file from the record query.
+    """
+    with hold_tempdir() as ftemp:
+        img_path = os.path.join(ftemp, 'image_544.jpg')
+        image_array = create_gap_image(size=(640, 480))
+        cv2.imwrite(img_path, image_array)
+        fsii = FrameSourceInfoAndImage(
+            frame_source_info=FrameSourceInfo(
+                source_file = img_path,
+                source_index = 0,
+                record_query=RecordQuery(
+                    case='example',
+                    record_id='nfdjsiajnfas',
+                    file=';'.join(os.path.join(ftemp, f'image_{i:04d}.jpg') for i in range(1000))
+                )
+            ),
+            image=image_array
+        )
+        path = fsii.save_to_image_file(ftemp)
+        print(f"Saved to path {path}")
 
 
 if __name__ == '__main__':
@@ -211,3 +232,4 @@ if __name__ == '__main__':
     test_serialization()
     test_write_annotation_to_directory_with_nonlatin()
     # test_cv2_read_write_non_unicode()
+    test_write_annotation_with_huge_file_count()
